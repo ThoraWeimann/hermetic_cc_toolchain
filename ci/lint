@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+# Copyright 2023 Uber Technologies, Inc.
+# Licensed under the MIT License
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "--- which zig"
+ZIG=${ZIG:-$(tools/bazel run "$@" --run_under=echo @zig_sdk//:zig)}
+
+>&2 echo "--- shellcheck :flag-lt:"
+if command -v shellcheck &> /dev/null; then
+    mapfile -t files < \
+        <(git ls-files)
+    mapfile -t scripts < \
+        <(awk '/#!(\/usr\/bin\/env bash|\/bin\/sh)/&&FNR==1{print FILENAME}' "${files[@]}")
+    >&2 echo "shellcheck"
+    for f in "${scripts[@]}"; do >&2 echo "  $f"; done
+    shellcheck "${scripts[@]}"
+    >&2 echo -e "OK\n"
+fi
+
+mapfile -t zigfiles < <(git ls-files '*.zig')
+>&2 echo "--- zig fmt ${zigfiles[*]}"
+$ZIG fmt "${zigfiles[@]}"
+
+>&2 echo "--- go fmt :go:"
+mapfile -t gofiles < <(git ls-files '**/*.go')
+tools/bazel run @go_sdk//:bin/gofmt -- -w "${gofiles[@]}"
+
+>&2 echo "--- buildifier :bazel:"
+tools/buildifier -r -mode fix "$PWD"
+
+>&2 echo "--- Gazelle :goat:"
+tools/bazel run //:gazelle -- -mode fix
+
+>&2 echo "--- git diff :git:"
+git diff --exit-code
+
+>&2 echo "OK :white_check_mark:"
